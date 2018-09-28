@@ -311,6 +311,12 @@ wait(void)
   }
 }
 
+// Lehmer OR Park-Miller RNG 
+uint32_t lcg_parkmiller(uint32_t *state){
+    return *state = ((uint64_t)*state * 48271u) % 0x7fffffff;
+}
+
+
 //PAGEBREAK: 42
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
@@ -325,7 +331,10 @@ scheduler(void)
   struct proc *p;
   struct cpu *c = mycpu();
   c->proc = 0;
-  
+  int r_tickets; // Runnable tickets
+  int chosen_one // proc choosed
+  int aux;       // auxiliar
+
   for(;;){
     // Enable interrupts on this processor.
     sti();
@@ -333,22 +342,32 @@ scheduler(void)
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->state != RUNNABLE)
-        continue;
+      if(p->state == RUNNABLE)
+        r_tickets += p->tickets;
+	
+      if(r_tickets == 0){
+	release($ptable.lock);
+	continue;
+      }
 
-      // Switch to chosen process.  It is the process's job
-      // to release ptable.lock and then reacquire it
-      // before jumping back to us.
-      c->proc = p;
-      switchuvm(p);
-      p->state = RUNNING;
+      chosen_one = lcg_parkmiller() % r_tickets + 1;
+      aux = 0;
+      
+      for(p = ptable.proc;p < &ptable.proc[NPROC];p++){
+	if(p->state != RUNNABLE) continue;
 
-      swtch(&(c->scheduler), p->context);
-      switchkvm();
+	aux += p->tickets;
+	if(chosen_one > aux) contine;
 
-      // Process is done running for now.
-      // It should have changed its p->state before coming back.
-      c->proc = 0;
+        c->proc = p;
+  	switchuvm(p);
+        p->state = RUNNING;
+
+        swtch(&(c->scheduler), p->context);
+        switchkvm();
+        
+	c->proc = 0;
+	break;
     }
     release(&ptable.lock);
 
