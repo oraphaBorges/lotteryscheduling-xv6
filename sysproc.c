@@ -12,7 +12,7 @@ sys_fork(void)
 {
  int n_tickets;
  if(argint(0,&n_tickets) < 0)return -1;
-   return fork(n_tickets);
+ return fork(n_tickets);
 }
 
 int

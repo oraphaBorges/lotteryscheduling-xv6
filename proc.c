@@ -6,8 +6,9 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#include "rand.c"
 
-#define MAX_T 15
+#define MAX_T 50
 #define MIN_T 10
 
 struct {
@@ -80,7 +81,6 @@ allocproc(void)
   char *sp;
 
   acquire(&ptable.lock);
-
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
     if(p->state == UNUSED)
       goto found;
@@ -183,13 +183,14 @@ growproc(int n)
 int
 fork(int n_tickets)
 {
+  // cprintf("fork");
   int i, pid;
   struct proc *np;
   struct proc *curproc = myproc();
 
-
   // Allocate process.
   if((np = allocproc()) == 0){
+    release(&ptable.lock);
     return -1;
   }
 
@@ -203,12 +204,14 @@ fork(int n_tickets)
   np->sz = curproc->sz;
   np->parent = curproc;
   *np->tf = *curproc->tf;
+  np->called = 0; // Count fo Call for a proc
 
   // Check if the quantity of tickets is valid
   if(n_tickets != 0){
-    if(n_tickets > MAX_T) np->tickets = MAX_T;
-    np->tickets = n_tickets;
-  } else np->tickets = MIN_T;
+    if(n_tickets < MAX_T){
+      if(n_tickets > 0)np->tickets = n_tickets;
+    }else np->tickets = MAX_T;
+  }else np->tickets = MIN_T;
 
   // Clear %eax so that fork returns 0 in the child.
   np->tf->eax = 0;
@@ -221,14 +224,13 @@ fork(int n_tickets)
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
 
   pid = np->pid;
-
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
-  np->called = 0;
 
   release(&ptable.lock);
 
+  cprintf("CREATED A NEW PROCESS - PID: %d TICKETS: %d\n", np->pid, np->tickets);
   return pid;
 }
 
@@ -322,11 +324,6 @@ wait(void)
   }
 }
 
-// Lehmer OR Park-Miller RNG 
-uint32_t lcg_parkmiller(uint32_t *state){
-    return *state = ((uint64_t)*state * 48271u) % 0x7fffffff;
-}
-
 
 //PAGEBREAK: 42
 // Per-CPU process scheduler.
@@ -342,61 +339,57 @@ scheduler(void)
   struct proc *p;
   struct cpu *c = mycpu();
   c->proc = 0;
-<<<<<<< HEAD
-=======
-  int r_tickets; // Runnable tickets
-  int chosen_one // proc choosed
-  int aux;       // auxiliar
->>>>>>> 525f20cbc9179d4d74ee19cc634493c6f81bb61f
 
-  for(;;){
+  int times = 0;
+  int r_tickets = 0;      // Runnable tickets
+  int chosen_one = 1;     // proc choosed
+
+  for(;;times++){
     // Enable interrupts on this processor.
-    sti();
-
     // Loop over process table looking for process to run.
+    sti();
     acquire(&ptable.lock);
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+
+    //find the total of runnable process
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
       if(p->state == RUNNABLE)
         r_tickets += p->tickets;
-	
-      if(r_tickets == 0){
-	release($ptable.lock);
-	continue;
-      }
 
-      chosen_one = lcg_parkmiller() % r_tickets + 1;
-      aux = 0;
-      
-      for(p = ptable.proc;p < &ptable.proc[NPROC];p++){
-	if(p->state != RUNNABLE) continue;
+    if(r_tickets == 0){
+       release(&ptable.lock);
+       continue;
+     }
+    if(r_tickets > 0){
+      srand(ticks*times);
+      chosen_one = rand() % r_tickets;
+      for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+        if(p->state == RUNNABLE){
+          chosen_one -= p->tickets;
+        }
+        if(p->state != RUNNABLE || chosen_one >= 0){
+      	 continue;
+       }
 
-<<<<<<< HEAD
-      // Switch to chosen process.  It is the process's job
+       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
       c->proc = p;
       switchuvm(p);
+
       p->state = RUNNING;
       p->called++;
-=======
-	aux += p->tickets;
-	if(chosen_one > aux) contine;
->>>>>>> 525f20cbc9179d4d74ee19cc634493c6f81bb61f
 
-        c->proc = p;
-  	switchuvm(p);
-        p->state = RUNNING;
+      swtch(&(c->scheduler), p->context);
+      switchkvm();
 
-        swtch(&(c->scheduler), p->context);
-        switchkvm();
-        
-	c->proc = 0;
-	break;
+    	c->proc = 0;
+    	break;
     }
-    release(&ptable.lock);
-
+  }
+  release(&ptable.lock);
   }
 }
+
 
 // Enter scheduler.  Must hold only ptable.lock
 // and have changed proc->state. Saves and restores
@@ -546,6 +539,7 @@ kill(int pid)
 void
 procdump(void)
 {
+  // cprintf("procdump\n");
   static char *states[] = {
   [UNUSED]    "unused",
   [EMBRYO]    "embryo",
@@ -566,7 +560,7 @@ procdump(void)
       state = states[p->state];
     else
       state = "???";
-    cprintf("pid: %d\tstate: %s\tname: %s\ttickets: %d\tcalled: %d", p->pid, state, p->name, p->tickets, p->tickets);
+    cprintf("pid: %d\tstate: %s\tname: %s\ttickets: %d\tcalled: %d", p->pid, state, p->name, p->tickets, p->called);
     if(p->state == SLEEPING){
       getcallerpcs((uint*)p->context->ebp+2, pc);
       for(i=0; i<10 && pc[i] != 0; i++)
