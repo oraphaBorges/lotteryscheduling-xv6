@@ -7,6 +7,9 @@
 #include "proc.h"
 #include "spinlock.h"
 
+#define MAX_T 15
+#define MIN_T 10
+
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
@@ -38,10 +41,10 @@ struct cpu*
 mycpu(void)
 {
   int apicid, i;
-  
+
   if(readeflags()&FL_IF)
     panic("mycpu called with interrupts enabled\n");
-  
+
   apicid = lapicid();
   // APIC IDs are not guaranteed to be contiguous. Maybe we should have
   // a reverse map, or reserve a register to store &cpus[i].
@@ -88,7 +91,6 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
-
   release(&ptable.lock);
 
   // Allocate kernel stack.
@@ -124,7 +126,7 @@ userinit(void)
   extern char _binary_initcode_start[], _binary_initcode_size[];
 
   p = allocproc();
-  
+
   initproc = p;
   if((p->pgdir = setupkvm()) == 0)
     panic("userinit: out of memory?");
@@ -137,7 +139,8 @@ userinit(void)
   p->tf->ss = p->tf->ds;
   p->tf->eflags = FL_IF;
   p->tf->esp = PGSIZE;
-  p->tf->eip = 0;  // beginning of initcode.S
+  p->tf->eip = 0;      // beginning of initcode.S
+  p->tickets = MAX_T;  // Inicicode needs tickets to inialize
 
   safestrcpy(p->name, "initcode", sizeof(p->name));
   p->cwd = namei("/");
@@ -178,11 +181,12 @@ growproc(int n)
 // Sets up stack to return as if from system call.
 // Caller must set state of returned proc to RUNNABLE.
 int
-fork(void)
+fork(int n_tickets)
 {
   int i, pid;
   struct proc *np;
   struct proc *curproc = myproc();
+
 
   // Allocate process.
   if((np = allocproc()) == 0){
@@ -200,6 +204,12 @@ fork(void)
   np->parent = curproc;
   *np->tf = *curproc->tf;
 
+  // Check if the quantity of tickets is valid
+  if(n_tickets != 0){
+    if(n_tickets > MAX_T) np->tickets = MAX_T;
+    np->tickets = n_tickets;
+  } else np->tickets = MIN_T;
+
   // Clear %eax so that fork returns 0 in the child.
   np->tf->eax = 0;
 
@@ -215,6 +225,7 @@ fork(void)
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
+  np->called = 0;
 
   release(&ptable.lock);
 
@@ -275,7 +286,7 @@ wait(void)
   struct proc *p;
   int havekids, pid;
   struct proc *curproc = myproc();
-  
+
   acquire(&ptable.lock);
   for(;;){
     // Scan through table looking for exited children.
@@ -331,9 +342,12 @@ scheduler(void)
   struct proc *p;
   struct cpu *c = mycpu();
   c->proc = 0;
+<<<<<<< HEAD
+=======
   int r_tickets; // Runnable tickets
   int chosen_one // proc choosed
   int aux;       // auxiliar
+>>>>>>> 525f20cbc9179d4d74ee19cc634493c6f81bb61f
 
   for(;;){
     // Enable interrupts on this processor.
@@ -356,8 +370,18 @@ scheduler(void)
       for(p = ptable.proc;p < &ptable.proc[NPROC];p++){
 	if(p->state != RUNNABLE) continue;
 
+<<<<<<< HEAD
+      // Switch to chosen process.  It is the process's job
+      // to release ptable.lock and then reacquire it
+      // before jumping back to us.
+      c->proc = p;
+      switchuvm(p);
+      p->state = RUNNING;
+      p->called++;
+=======
 	aux += p->tickets;
 	if(chosen_one > aux) contine;
+>>>>>>> 525f20cbc9179d4d74ee19cc634493c6f81bb61f
 
         c->proc = p;
   	switchuvm(p);
@@ -437,7 +461,7 @@ void
 sleep(void *chan, struct spinlock *lk)
 {
   struct proc *p = myproc();
-  
+
   if(p == 0)
     panic("sleep");
 
@@ -542,7 +566,7 @@ procdump(void)
       state = states[p->state];
     else
       state = "???";
-    cprintf("%d %s %s", p->pid, state, p->name);
+    cprintf("pid: %d\tstate: %s\tname: %s\ttickets: %d\tcalled: %d", p->pid, state, p->name, p->tickets, p->tickets);
     if(p->state == SLEEPING){
       getcallerpcs((uint*)p->context->ebp+2, pc);
       for(i=0; i<10 && pc[i] != 0; i++)
