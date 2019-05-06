@@ -9,7 +9,7 @@
 #include "rand.c"
 
 #define MAX_T 50
-#define MIN_T 10
+#define MIN_T 1
 
 struct {
   struct spinlock lock;
@@ -348,21 +348,27 @@ scheduler(void)
     // Enable interrupts on this processor.
     // Loop over process table looking for process to run.
     sti();
+    // blokc the process table
     acquire(&ptable.lock);
 
     //find the total of runnable process
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
       if(p->state == RUNNABLE)
+        // collect the quantitie of tickets from runnable process
         r_tickets += p->tickets;
 
+    // if there is no tickets
     if(r_tickets == 0){
+       // unlock the process table
        release(&ptable.lock);
        continue;
      }
+
     if(r_tickets > 0){
       srand(ticks*times);
-      chosen_one = rand() % r_tickets;
+      chosen_one = rand() % r_tickets;  // Quantitie of tickets chosen to give to process.
       for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+        // Just give those tickets to the proc if his state is RUNNABLE
         if(p->state == RUNNABLE){
           chosen_one -= p->tickets;
         }
@@ -370,7 +376,7 @@ scheduler(void)
       	 continue;
        }
 
-       // Switch to chosen process.  It is the process's job
+      // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
       c->proc = p;
@@ -382,10 +388,11 @@ scheduler(void)
       swtch(&(c->scheduler), p->context);
       switchkvm();
 
-    	c->proc = 0;
-    	break;
+      c->proc = 0;
+        break;
     }
   }
+  // unlock the process table
   release(&ptable.lock);
   }
 }
@@ -534,19 +541,19 @@ kill(int pid)
 
 //PAGEBREAK: 36
 // Print a process listing to console.  For debugging.
-// Runs when user types ^P on console.
+// Runs when user types [Ctrl+P] on console.
 // No lock to avoid wedging a stuck machine further.
 void
 procdump(void)
 {
   // cprintf("procdump\n");
   static char *states[] = {
-  [UNUSED]    "unused",
-  [EMBRYO]    "embryo",
-  [SLEEPING]  "sleep ",
-  [RUNNABLE]  "runble",
-  [RUNNING]   "run   ",
-  [ZOMBIE]    "zombie"
+  [UNUSED]    "unused   ",
+  [EMBRYO]    "embryo   ",
+  [SLEEPING]  "sleeping ",
+  [RUNNABLE]  "runnable ",
+  [RUNNING]   "runing   ",
+  [ZOMBIE]    "zombie   "
   };
   int i;
   struct proc *p;
@@ -560,7 +567,9 @@ procdump(void)
       state = states[p->state];
     else
       state = "???";
-    cprintf("pid: %d\tstate: %s\tname: %s\ttickets: %d\tcalled: %d", p->pid, state, p->name, p->tickets, p->called);
+    // Print do [Ctrl+P]
+    cprintf("pid:%d\t tickets:%d\t called:%d\t  state:%s\t name:%s", p->pid, p->tickets, p->called, state, p->name);
+
     if(p->state == SLEEPING){
       getcallerpcs((uint*)p->context->ebp+2, pc);
       for(i=0; i<10 && pc[i] != 0; i++)
@@ -568,4 +577,5 @@ procdump(void)
     }
     cprintf("\n");
   }
+  cprintf("\n");
 }
